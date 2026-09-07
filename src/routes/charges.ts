@@ -16,17 +16,26 @@ import {
   paymentValidationError,
 } from "../errors/domainError.js";
 import { paymentErrorHandler } from "../middleware/paymentErrorHandler.js";
+import { parseIntParam } from "../queryParams.js";
+import { AuditLog } from "../auditLog.js";
 
 export type ChargesRouterOptions = {
   idempotencyStore?: InMemoryChargeIdempotencyStore;
   chargeStore?: InMemoryChargeStore;
+  auditLog?: AuditLog;
 };
+
+function firstQueryString(value: unknown): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === "string" ? raw : "";
+}
 
 export function createChargesRouter(options: ChargesRouterOptions = {}): Router {
   const router = Router();
+  const auditLog = options.auditLog ?? new AuditLog();
   const idempotencyStore =
     options.idempotencyStore ?? new InMemoryChargeIdempotencyStore();
-  const chargeStore = options.chargeStore ?? new InMemoryChargeStore();
+  const chargeStore = options.chargeStore ?? new InMemoryChargeStore(auditLog);
 
   router.post("/api/v1/charges", (req: Request, res: Response, next: NextFunction) => {
     const requestId = paymentRequestId(req);
@@ -113,6 +122,38 @@ export function createChargesRouter(options: ChargesRouterOptions = {}): Router 
       res.status(200).json({ charge, requestId: paymentRequestId(req) });
     }
   );
+
+  router.get("/api/v1/charges/:chargeId/audit", (req: Request, res: Response) => {
+    const chargeId = String(req.params.chargeId);
+    const limit = parseIntParam(req.query.limit, {
+      defaultValue: 100,
+      min: 1,
+      max: 500,
+    });
+    const offset = parseIntParam(req.query.offset, {
+      defaultValue: 0,
+      min: 0,
+      max: 10_000,
+    });
+    const entries = auditLog.queryByTarget(chargeId, limit, offset);
+    res.status(200).json({ entries, requestId: paymentRequestId(req) });
+  });
+
+  router.get("/api/v1/audit", (req: Request, res: Response) => {
+    const actor = firstQueryString(req.query.actor);
+    const limit = parseIntParam(req.query.limit, {
+      defaultValue: 100,
+      min: 1,
+      max: 500,
+    });
+    const offset = parseIntParam(req.query.offset, {
+      defaultValue: 0,
+      min: 0,
+      max: 10_000,
+    });
+    const entries = auditLog.queryByActor(actor, limit, offset);
+    res.status(200).json({ entries, requestId: paymentRequestId(req) });
+  });
 
   router.use(paymentErrorHandler);
 

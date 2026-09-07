@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AuditLog, redactSecrets } from "./auditLog.js";
 
 export const CHARGE_KEY_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
@@ -139,6 +140,11 @@ export class InMemoryChargeIdempotencyStore implements ChargeIdempotencyStore {
 
 export class InMemoryChargeStore {
   private readonly charges: Charge[] = [];
+  private readonly auditLog?: AuditLog;
+
+  constructor(auditLog?: AuditLog) {
+    this.auditLog = auditLog;
+  }
 
   create(tenantId: string, input: ChargeInput, now = Date.now()): Charge {
     const charge: Charge = {
@@ -149,6 +155,13 @@ export class InMemoryChargeStore {
       status: "succeeded",
     };
     this.charges.push(charge);
+    this.auditLog?.append({
+      actor: tenantId,
+      action: "charge.create",
+      targetId: charge.id,
+      targetType: "charge",
+      after: redactSecrets(charge as unknown as Record<string, unknown>),
+    });
     return cloneCharge(charge);
   }
 
